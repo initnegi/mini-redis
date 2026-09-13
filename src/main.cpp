@@ -7,11 +7,17 @@
 #include <unordered_map>
 #include <thread>
 #include <mutex>
+#include <chrono>
+#include <optional>
 
 #pragma comment(lib, "ws2_32.lib")
 
-// ---- Shared in-memory store, now accessed by multiple threads ----
-std::unordered_map<std::string, std::string> store;
+struct Entry {
+    std::string value;
+    std::optional<std::chrono::steady_clock::time_point> expiry; // no value = never expires
+};
+
+std::unordered_map<std::string, Entry> store;
 std::mutex storeMutex;   // protects every access to 'store' above
 
 // ---- Split a line like "SET foo bar" into tokens ["SET", "foo", "bar"] ----
@@ -23,6 +29,19 @@ std::vector<std::string> tokenize(const std::string& line) {
         tokens.push_back(token);
     }
     return tokens;
+}
+
+bool isKeyValid(const std::string& key) {
+    auto it = store.find(key);
+    if(it == store.end()) {
+        return false;
+    }
+
+    if(it->second.expiry.has_value() && std::chrono::steady_clock::now() >= it->second.expiry.value()) {
+        store.erase(it);
+        return false;
+    }
+    return true;
 }
 
 // ---- Process one command, return the response string to send back ----
@@ -39,7 +58,7 @@ std::string handleCommand(const std::vector<std::string>& tokens) {
             return "ERR usage: SET key value\r\n";
         }
         std::lock_guard<std::mutex> lock(storeMutex);
-        store[tokens[1]] = tokens[2];
+        store[tokens[1]] = {tokens[2], std::nullopt}; 
         return "OK\r\n";
     }
     else if (cmd == "GET") {
@@ -47,11 +66,12 @@ std::string handleCommand(const std::vector<std::string>& tokens) {
             return "ERR usage: GET key\r\n";
         }
         std::lock_guard<std::mutex> lock(storeMutex);
-        auto it = store.find(tokens[1]);
-        if (it == store.end()) {
+        if(!isKeyValid(tokens[1])) {
             return "(nil)\r\n";
         }
-        return it->second + "\r\n";
+
+        auto it = store.find(tokens[1]);
+        return it->second.value + "\r\n";
     }
     else if (cmd == "DEL") {
         if (tokens.size() != 2) {
@@ -66,10 +86,59 @@ std::string handleCommand(const std::vector<std::string>& tokens) {
             return "ERR usage: EXISTS key\r\n";
         }
         std::lock_guard<std::mutex> lock(storeMutex);
-        return (store.find(tokens[1]) != store.end() ? "1\r\n" : "0\r\n");
+        if(!isKeyValid(tokens[1])) {
+            return "0\r\n";
+        }
+        return "1\r\n";
     }
     else if (cmd == "QUIT") {
         return "BYE\r\n";
+    }
+    else if (cmd == "EXPIRE") {
+        if (tokens.size() != 3) {
+            return "ERR usage: EXPIRE key seconds\r\n";
+        }
+        std::lock_guard<std::mutex> lock(storeMutex);
+        if(!isKeyValid(tokens[1])) {
+            return "0\r\n";
+        }
+
+        try {
+            int seconds = std::stoi(tokens[2]);
+            auto it = store.find(tokens[1]);
+            it->second.expiry = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+            return "1\r\n";
+        } catch (const std::invalid_argument&) {
+            return "ERR invalid seconds value\r\n";
+        } catch (const std::out_of_range&) {
+            return "ERR seconds value out of range\r\n";
+        }
+    }
+    else if (cmd == "TTL") {
+        if (tokens.size() != 2) {
+            return "ERR usage: TTL key\r\n";
+        }
+        std::lock_guard<std::mutex> lock(storeMutex);
+        if(!isKeyValid(tokens[1])) {
+            return "-2\r\n"; // key does not exist
+        }
+
+        auto it = store.find(tokens[1]);
+        if(!it->second.expiry.has_value()) {
+            return "-1\r\n"; // key exists but has no expiry
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        auto expiryTime = it->second.expiry.value();
+        auto ttl = std::chrono::duration_cast<std::chrono::seconds>(expiryTime - now).count();
+        
+        if(ttl < 0) {
+            store.erase(it);
+            return "-2\r\n"; // key has expired
+        }
+
+        return std::to_string(ttl) + "\r\n";
+
     }
     else {
         return "ERR unknown command '" + cmd + "'\r\n";

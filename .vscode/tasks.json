@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "g++",
+      "args": ["-std=c++23", "-Wall", "-Wextra", "-pthread", "src/main.cpp", "-lws2_32", "-o", "server.exe"],
+      "group": { "kind": "build", "isDefault": true }
+    }
+  ]
+}
