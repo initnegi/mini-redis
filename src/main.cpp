@@ -70,7 +70,10 @@ void saveSnapshot() {
         if (node->entry.expiry.has_value()) {
             auto now = std::chrono::steady_clock::now();
             auto diff = std::chrono::duration_cast<std::chrono::seconds>(node->entry.expiry.value() - now).count();
-            remainingSeconds = diff; // could be 0 or positive; we only save valid (non-expired) keys anyway
+            if (diff < 0) {
+                continue;  // already expired, skip persisting this key entirely
+            }
+            remainingSeconds = diff;
         }
 
         outFile << node->key << "\t" << node->entry.value << "\t" << remainingSeconds << "\n";
