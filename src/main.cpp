@@ -30,6 +30,8 @@ std::mutex storeMutex;   // protects every access to 'store' above
 Node* dummyHead = new Node();
 Node* dummyTail = new Node();
 
+const size_t MAX_KEYS = 3; // can be set according to the need
+
 void removeNode(Node* node){
     Node* before = node->prev;
     Node* after = node->next;
@@ -105,7 +107,14 @@ std::string handleCommand(const std::vector<std::string>& tokens) {
             newNode->key = tokens[1];
             newNode->entry = {tokens[2], std::nullopt};
             store[tokens[1]] = newNode;
-            addToFront(newNode);
+            addToFront(newNode); 
+
+            if (store.size() > MAX_KEYS) {
+                Node* lru = dummyTail->prev;
+                removeNode(lru);
+                store.erase(lru->key);
+                delete lru;
+            }
         }
         return "OK\r\n";
     }
