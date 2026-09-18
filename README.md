@@ -91,6 +91,19 @@ A single mutex protects the entire store. This is simpler and safer than fine-gr
 | `SAVE` | Write the current store to `snapshot.txt` |
 | `QUIT` | Close the connection |
 
+## Benchmark Results
+
+Measured using a custom Python load-testing script (`benchmark.py`) simulating concurrent clients issuing a mixed SET/GET workload against a small rotating key set (to exercise realistic cache access patterns, including LRU reordering).
+
+| Concurrent Clients | Total Ops | Throughput (ops/sec) | Avg Latency |
+|---|---|---|---|
+| 10 | 5,000 | ~54,000 | ~0.018 ms |
+| 50 | 25,000 | ~54,000-66,500 | ~0.015-0.018 ms |
+| 100 | 50,000 | ~55,000-61,000 | ~0.016-0.018 ms |
+
+Throughput remained stable (no meaningful degradation) as concurrency scaled from 10 to 100 clients, indicating the single global mutex is not yet a bottleneck at this scale. All measurements taken on localhost (no network latency); results will vary across hardware.
+
+
 ## Known Limitations
 
 - **Downtime is not accounted for in persistence.** TTLs are saved as "remaining seconds" and re-anchored on load - if the server is down for a while between a `SAVE` and a restart, keys will expire later than they "should" in wall-clock time. Real Redis avoids this by storing absolute Unix timestamps in its RDB format; this project prioritized `steady_clock`'s runtime correctness guarantees over this edge case.
