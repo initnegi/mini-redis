@@ -14,11 +14,43 @@
 
 struct Entry {
     std::string value;
-    std::optional<std::chrono::steady_clock::time_point> expiry; // no value = never expires
+    std::optional<std::chrono::steady_clock::time_point> expiry; // no value => never expires
 };
 
-std::unordered_map<std::string, Entry> store;
+struct Node {
+    std::string key;
+    Entry entry;
+    Node* prev;
+    Node* next;
+};
+
+std::unordered_map<std::string, Node*> store;
 std::mutex storeMutex;   // protects every access to 'store' above
+
+Node* dummyHead = new Node();
+Node* dummyTail = new Node();
+
+void removeNode(Node* node){
+    Node* before = node->prev;
+    Node* after = node->next;
+
+    // remove B from A <---> B <---> C means A <---> C
+    before->next = after;
+    after->prev = before;
+}
+
+void addToFront(Node* node){
+    node->next = dummyHead->next;
+    node->prev = dummyHead;
+    dummyHead->next->prev = node;
+    dummyHead->next = node;
+}
+
+void moveToFront(Node* node){
+    removeNode(node);
+    addToFront(node);
+}
+
 
 // ---- Split a line like "SET foo bar" into tokens ["SET", "foo", "bar"] ----
 std::vector<std::string> tokenize(const std::string& line) {
@@ -37,8 +69,11 @@ bool isKeyValid(const std::string& key) {
         return false;
     }
 
-    if(it->second.expiry.has_value() && std::chrono::steady_clock::now() >= it->second.expiry.value()) {
+    Node* node = it->second;
+    if(node->entry.expiry.has_value() && std::chrono::steady_clock::now() >= node->entry.expiry.value()) {
+        removeNode(node);
         store.erase(it);
+        delete node;
         return false;
     }
     return true;
@@ -58,7 +93,20 @@ std::string handleCommand(const std::vector<std::string>& tokens) {
             return "ERR usage: SET key value\r\n";
         }
         std::lock_guard<std::mutex> lock(storeMutex);
-        store[tokens[1]] = {tokens[2], std::nullopt}; 
+
+        auto it = store.find(tokens[1]);
+        if (it != store.end()) {
+            it->second->entry.value = tokens[2];
+            it->second->entry.expiry = std::nullopt;
+            moveToFront(it->second);
+        }
+        else{
+            Node* newNode = new Node();
+            newNode->key = tokens[1];
+            newNode->entry = {tokens[2], std::nullopt};
+            store[tokens[1]] = newNode;
+            addToFront(newNode);
+        }
         return "OK\r\n";
     }
     else if (cmd == "GET") {
@@ -71,15 +119,27 @@ std::string handleCommand(const std::vector<std::string>& tokens) {
         }
 
         auto it = store.find(tokens[1]);
-        return it->second.value + "\r\n";
+        Node* node = it->second;
+        moveToFront(node);
+        return node->entry.value + "\r\n";
     }
     else if (cmd == "DEL") {
         if (tokens.size() != 2) {
             return "ERR usage: DEL key\r\n";
         }
         std::lock_guard<std::mutex> lock(storeMutex);
-        size_t erased = store.erase(tokens[1]);
-        return (erased > 0 ? "1\r\n" : "0\r\n");
+
+        auto it = store.find(tokens[1]);
+        if (it == store.end()) {
+            return "0\r\n";
+        }
+
+        Node* node = it->second;
+        removeNode(node);
+        store.erase(it);
+        delete node;
+
+        return "1\r\n";
     }
     else if (cmd == "EXISTS") {
         if (tokens.size() != 2) {
@@ -106,7 +166,8 @@ std::string handleCommand(const std::vector<std::string>& tokens) {
         try {
             int seconds = std::stoi(tokens[2]);
             auto it = store.find(tokens[1]);
-            it->second.expiry = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+            Node* node = it->second;
+            node->entry.expiry = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
             return "1\r\n";
         } catch (const std::invalid_argument&) {
             return "ERR invalid seconds value\r\n";
@@ -124,16 +185,20 @@ std::string handleCommand(const std::vector<std::string>& tokens) {
         }
 
         auto it = store.find(tokens[1]);
-        if(!it->second.expiry.has_value()) {
+        Node* node = it->second;
+
+        if(!node->entry.expiry.has_value()) {
             return "-1\r\n"; // key exists but has no expiry
         }
 
         auto now = std::chrono::steady_clock::now();
-        auto expiryTime = it->second.expiry.value();
+        auto expiryTime = node->entry.expiry.value();
         auto ttl = std::chrono::duration_cast<std::chrono::seconds>(expiryTime - now).count();
         
         if(ttl < 0) {
+            removeNode(node);
             store.erase(it);
+            delete node;
             return "-2\r\n"; // key has expired
         }
 
@@ -177,6 +242,9 @@ void handleClient(SOCKET clientSocket) {
 }
 
 int main() {
+    dummyHead->next = dummyTail;
+    dummyTail->prev = dummyHead;
+
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
         std::cerr << "WSAStartup failed\n";
