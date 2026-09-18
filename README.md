@@ -29,31 +29,31 @@ No external libraries or frameworks are used anywhere in this project - every ne
 ## Architecture
 
 ```
-                        ┌─────────────────┐
-Client 1 ─────socket────▶                 │
+                        ┌──────────────────┐
+Client 1 ─────socket────▶                  │
 Client 2 ─────socket────▶  Listening       │──▶ accept() ──▶ spawns thread per client
 Client 3 ─────socket────▶  Socket (6379)   │
-                        └─────────────────┘
+                        └──────────────────┘
                                                       │
                                                       ▼
                                       ┌───────────────────────────┐
-                                      │   handleClient(thread)     │
-                                      │   - recv() command         │
-                                      │   - parse & dispatch       │
-                                      │   - send() response        │
+                                      │   handleClient(thread)    │
+                                      │   - recv() command        │
+                                      │   - parse & dispatch      │
+                                      │   - send() response       │
                                       └───────────────────────────┘
                                                       │
                                                       ▼
-                                 ┌──────────────────────────────────┐
-                                 │  Shared Store (mutex-protected)   │
+                                 ┌────────────────────────────────────┐
+                                 │  Shared Store (mutex-protected)    │
                                  │                                    │
-                                 │  unordered_map<string, Node*>     │
+                                 │  unordered_map<string, Node*>      │
                                  │         │                          │
                                  │         ▼                          │
                                  │  [dummyHead] <-> Node <-> Node     │
                                  │             <-> ... <-> [dummyTail]│
                                  │   (most recent)      (least recent)│
-                                 └──────────────────────────────────┘
+                                 └────────────────────────────────────┘
                                                       │
                                                       ▼
                                           snapshot.txt (on SAVE)
