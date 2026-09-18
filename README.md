@@ -110,6 +110,7 @@ Throughput remained stable (no meaningful degradation) as concurrency scaled fro
 - **Single global lock** -> no lock sharding/striping; all operations serialize on one mutex.
 - **No AOF (append-only log)** -> only point-in-time snapshotting is implemented; a crash between two `SAVE`s loses any writes since the last snapshot.
 - **Manual `SAVE` only** -> no automatic periodic snapshotting yet (planned).
+- **`MAX_KEYS` is set low (3) for demo purposes** — this makes LRU eviction easy to observe/test manually. In a real deployment, this would be set much higher (e.g., 10,000+) or made configurable via a startup argument.
 
 ## Building & Running
 
