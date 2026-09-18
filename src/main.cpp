@@ -9,6 +9,7 @@
 #include <mutex>
 #include <chrono>
 #include <optional>
+#include <fstream>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -52,6 +53,72 @@ void moveToFront(Node* node){
     removeNode(node);
     addToFront(node);
 }
+
+void saveSnapshot() {
+    std::lock_guard<std::mutex> lock(storeMutex);
+
+    std::ofstream outFile("snapshot.txt", std::ios::trunc);
+    if (!outFile.is_open()) {
+        std::cerr << "Failed to open snapshot.txt for writing\n";
+        return;
+    }
+
+    for (const auto& pair : store) {
+        Node* node = pair.second;
+        long long remainingSeconds = -1;  // -1 means "no expiry"
+
+        if (node->entry.expiry.has_value()) {
+            auto now = std::chrono::steady_clock::now();
+            auto diff = std::chrono::duration_cast<std::chrono::seconds>(node->entry.expiry.value() - now).count();
+            remainingSeconds = diff; // could be 0 or positive; we only save valid (non-expired) keys anyway
+        }
+
+        outFile << node->key << "\t" << node->entry.value << "\t" << remainingSeconds << "\n";
+    }
+
+    outFile.close();
+    std::cout << "Snapshot saved (" << store.size() << " keys).\n";
+}
+
+void loadSnapshot() {
+    std::ifstream inFile("snapshot.txt");
+    if (!inFile.is_open()) {
+        std::cout << "No snapshot file found, starting with empty store.\n";
+        return;
+    }
+
+    std::string line;
+    int loadedCount = 0;
+
+    while (std::getline(inFile, line)) {
+        std::istringstream iss(line);
+        std::string key, value, secondsStr;
+
+        if (!std::getline(iss, key, '\t')) continue;
+        if (!std::getline(iss, value, '\t')) continue;
+        if (!std::getline(iss, secondsStr, '\t')) continue;
+
+        long long remainingSeconds = std::stoll(secondsStr);
+
+        Node* newNode = new Node();
+        newNode->key = key;
+        newNode->entry.value = value;
+
+        if (remainingSeconds >= 0) {
+            newNode->entry.expiry = std::chrono::steady_clock::now() + std::chrono::seconds(remainingSeconds);
+        } else {
+            newNode->entry.expiry = std::nullopt;
+        }
+
+        store[key] = newNode;
+        addToFront(newNode);
+        loadedCount++;
+    }
+
+    inFile.close();
+    std::cout << "Snapshot loaded (" << loadedCount << " keys).\n";
+}
+
 
 
 // ---- Split a line like "SET foo bar" into tokens ["SET", "foo", "bar"] ----
@@ -214,6 +281,10 @@ std::string handleCommand(const std::vector<std::string>& tokens) {
         return std::to_string(ttl) + "\r\n";
 
     }
+    else if (cmd == "SAVE") {
+        saveSnapshot();
+        return "OK\r\n";
+    }
     else {
         return "ERR unknown command '" + cmd + "'\r\n";
     }
@@ -253,6 +324,8 @@ void handleClient(SOCKET clientSocket) {
 int main() {
     dummyHead->next = dummyTail;
     dummyTail->prev = dummyHead;
+
+    loadSnapshot();
 
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
