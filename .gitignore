@@ -1,4 +1,6 @@
 *.exe
 *.o
 *.obj
-.vscode/git
+.vscode/
+self_notes.txt
+snapshot.txt
