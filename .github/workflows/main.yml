@@ -29,14 +29,19 @@ jobs:
 
       - name: Run PRScout Docker Container
         env:
-          GITHUB_TOKEN: ${{ secrets.PRSCOUT_GITHUB_TOKEN }}
+          PRSCOUT_GITHUB_TOKEN: ${{ secrets.PRSCOUT_GITHUB_TOKEN }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GROQ_MODEL: ${{ secrets.GROQ_MODEL }}
           GROQ_FALLBACK_MODEL: ${{ secrets.GROQ_FALLBACK_MODEL }}
         run: |
+          if [ -z "$PRSCOUT_GITHUB_TOKEN" ]; then
+            echo "::error::PRSCOUT_GITHUB_TOKEN is unavailable. Add it to the repository running this workflow; secrets are not passed to pull_request workflows from forks."
+            exit 1
+          fi
+
           docker run --rm \
             -v $(pwd):/workspace \
-            --env GITHUB_TOKEN \
+            --env PRSCOUT_GITHUB_TOKEN \
             --env GROQ_API_KEY \
             --env GROQ_MODEL \
             --env GROQ_FALLBACK_MODEL \
