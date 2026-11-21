@@ -1,0 +1,43 @@
+name: PRScout Analysis
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Generate pr.json Event Payload
+        run: |
+          cat << 'EOF' > pr.json
+          {
+            "repository": {
+              "full_name": "${{ github.repository }}"
+            },
+            "pull_request": {
+              "number": ${{ github.event.pull_request.number }}
+            }
+          }
+          EOF
+          
+          echo "Generated pr.json contents:"
+          cat pr.json
+
+      - name: Run PRScout Docker Container
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL: ${{ secrets.GROQ_MODEL }}
+          GROQ_FALLBACK_MODEL: ${{ secrets.GROQ_FALLBACK_MODEL }}
+        run: |
+          docker run --rm \
+            -v $(pwd):/workspace \
+            --env GITHUB_TOKEN \
+            --env GROQ_API_KEY \
+            --env GROQ_MODEL \
+            --env GROQ_FALLBACK_MODEL \
+            asmb3456/prscout:latest --event /workspace/pr.json
